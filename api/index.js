@@ -14,13 +14,17 @@ const port = process.env.PORT || 5001;
 const stripe = stripePackage(process.env.STRIPE_SECRET_KEY);
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: process.env.NODE_ENV === 'production'
+        ? ['https://your-frontend-domain.vercel.app']
+        : ['http://localhost:3000']
+}));
 app.use(express.json());
 app.use(bodyParser.json());
 app.use(express.static(path.resolve('dist')));
 
-// API endpoint for fetching events
-app.get('/events', async (req, res) => {
+// API Routes
+app.get('/api/events', async (req, res) => {
     try {
         const username = process.env.EVENTFINDA_USERNAME;
         const password = process.env.EVENTFINDA_PASSWORD;
@@ -33,48 +37,42 @@ app.get('/events', async (req, res) => {
             params: { ...queryParams }
         });
         res.json(response.data);
-        console.log(response.data)
     } catch (error) {
         console.error('Error fetching events:', error.message);
         res.status(500).send('Internal Server Error');
     }
 });
 
-app.post('/create-checkout-session', async (req, res) => {
+app.post('/api/create-checkout-session', async (req, res) => {
     const { cartItems } = req.body;
-
-    console.log("Received cart items:", cartItems);
 
     if (!cartItems || !Array.isArray(cartItems) || cartItems.length === 0) {
         return res.status(400).send({ error: 'No items in the cart' });
     }
 
     try {
-        const lineItems = cartItems.map(item => {
-            console.log("Item image URL:", item.imageUrl); // Log the image URL
-            return {
-                price_data: {
-                    currency: 'sgd',
-                    product_data: {
-                        name: item.eventName,
-                        metadata: {
-                            eventDate: item.eventDate,
-                            seatNumbers: JSON.stringify(item.seatNumbers), // Store seat numbers as JSON
-                            imageUrl: item.imageUrl, // Optionally store the image URL
-                        },
+        const lineItems = cartItems.map(item => ({
+            price_data: {
+                currency: 'sgd',
+                product_data: {
+                    name: item.eventName,
+                    metadata: {
+                        eventDate: item.eventDate,
+                        seatNumbers: JSON.stringify(item.seatNumbers),
+                        imageUrl: item.imageUrl,
                     },
-                    unit_amount: item.pricePerItem * 100,
                 },
-                quantity: item.quantity,
-            };
-        });
+                unit_amount: item.pricePerItem * 100,
+            },
+            quantity: item.quantity,
+        }));
 
         const session = await stripe.checkout.sessions.create({
             payment_method_types: ['card'],
             line_items: lineItems,
             mode: 'payment',
-            success_url: `https://ticke-tree-backend.vercel.app/success?session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: 'https://ticke-tree-backend.vercel.app/error',
+            success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${process.env.FRONTEND_URL}/error`,
             allow_promotion_codes: true,
         });
 
@@ -85,7 +83,7 @@ app.post('/create-checkout-session', async (req, res) => {
     }
 });
 
-app.get('/checkout-session', async (req, res) => {
+app.get('/api/checkout-session', async (req, res) => {
     const { session_id } = req.query;
     try {
         const session = await stripe.checkout.sessions.retrieve(session_id, {
@@ -95,7 +93,7 @@ app.get('/checkout-session', async (req, res) => {
         const items = session.line_items.data.map(item => ({
             eventName: item.price.product.name,
             eventDate: item.price.product.metadata.eventDate,
-            seatNumbers: JSON.parse(item.price.product.metadata.seatNumbers || '[]'), // Parse seat numbers
+            seatNumbers: JSON.parse(item.price.product.metadata.seatNumbers || '[]'),
             quantity: item.quantity,
             pricePerItem: item.price.unit_amount / 100,
             imageUrl: item.price.product.metadata.imageUrl,
@@ -104,7 +102,6 @@ app.get('/checkout-session', async (req, res) => {
         const orderSummary = items[0];
         const customerEmail = session.customer_details?.email || session.customer?.email;
 
-        // Send confirmation email
         await sendConfirmationEmail(customerEmail, orderSummary);
 
         res.json({
@@ -119,7 +116,6 @@ app.get('/checkout-session', async (req, res) => {
     }
 });
 
-// Import sendConfirmationEmail function
 async function sendConfirmationEmail(email, orderSummary) {
     try {
         const transporter = nodemailer.createTransport({
@@ -142,7 +138,6 @@ async function sendConfirmationEmail(email, orderSummary) {
                 <p><strong>Seats:</strong> ${orderSummary.seatNumbers.join(', ')}</p>
                 <p><strong>Quantity:</strong> ${orderSummary.quantity}</p>
                 <p><strong>Total Price:</strong> SGD ${(isNaN(orderSummary.totalPrice / 100) ? '50.00' : (orderSummary.totalPrice / 100).toFixed(2))}</p>
-
             `
         };
 
@@ -154,8 +149,7 @@ async function sendConfirmationEmail(email, orderSummary) {
     }
 }
 
-// Define the endpoint
-app.post('/send-confirmation-email', async (req, res) => {
+app.post('/api/send-confirmation-email', async (req, res) => {
     const { email, orderSummary } = req.body;
     try {
         await sendConfirmationEmail(email, orderSummary);
@@ -166,7 +160,5 @@ app.post('/send-confirmation-email', async (req, res) => {
     }
 });
 
-// Start the server
-app.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
-});
+// For Vercel serverless deployment
+export default app;
