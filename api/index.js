@@ -20,7 +20,7 @@ app.use(bodyParser.json());
 app.use(express.static(path.resolve('dist')));
 
 // API endpoint for fetching events
-app.get('/api/events', async (req, res) => {
+app.get('/events', async (req, res) => {
     try {
         const username = process.env.EVENTFINDA_USERNAME;
         const password = process.env.EVENTFINDA_PASSWORD;
